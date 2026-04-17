@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Super Nina - Custom Mario Clone</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: #111; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            width: 100vw;
+            overflow: hidden; 
+            color: white; 
+            font-family: sans-serif; 
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 800px;
+            height: 480px;
+            border: 4px solid #fff;
+            box-shadow: 0 0 40px rgba(0,0,0,1);
+            background: #87CEEB;
+            transform-origin: center center;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated; 
+        }
+
+        #mainMenu {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            z-index: 10;
+            text-align: center;
+        }
+        #mainMenu h1 { font-size: 55px; color: #ff4444; text-shadow: 3px 3px white; margin-bottom: 0px; }
+        #mainMenu h3 { font-size: 22px; color: gold; margin-top: 10px; margin-bottom: 40px; font-style: italic; }
+        
+        .menu-btn {
+            padding: 15px 40px;
+            font-size: 22px;
+            cursor: pointer;
+            margin: 10px;
+            border: 3px solid white;
+            background: #333;
+            color: white;
+            border-radius: 10px;
+            font-weight: bold;
+            transition: 0.2s;
+            width: 300px;
+        }
+        .menu-btn:hover { background: #555; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <div id="mainMenu">
+        <h1>Super Nina</h1>
+        <h3>(From Santa Rosa to Kharkiv! Meet your Bee Keeper)</h3>
+        <button id="btnPlay" class="menu-btn">Play</button>
+        <button id="btnFullscreen" class="menu-btn">Fullscreen</button>
+        <button id="btnMusic" class="menu-btn">Turn off music</button>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="480"></canvas>
+</div>
+
+<script>
+// =====================================================================
+// DYNAMIC SCREEN SCALING
+// =====================================================================
+function resizeGame() {
+    const scale = Math.min(window.innerWidth / 820, window.innerHeight / 500);
+    document.getElementById('gameContainer').style.transform = `scale(${scale})`;
+}
+window.addEventListener('resize', resizeGame);
+resizeGame();
+
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => console.log(err));
+    } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+    }
+}
+
+// =====================================================================
+// 1. SPRITE & AUDIO CONFIGURATION
+// =====================================================================
+const CUSTOM_AUDIO = {
+    bgMusic:        'sounds/background.mp3',  // Background music path
+    // --- Per-coin sounds ---
+    coinNormal:     'sounds/miffy.mp3',  // Coin type 'C' (Miffy)     → put sound path here
+    coinSpeed:      'sounds/matcha.mp3',  // Coin type 'S' (Matcha)    → put sound path here
+    coinJump:       'sounds/halva.mp3',  // Coin type 'J' (Jump)      → put sound path here
+    coinInvincible: '',  // Coin type 'I' (Star)      → put sound path here
+    coinSlow:       'sounds/raisin.mp3',  // Coin type 'L' (Raisin)    → put sound path here
+    // --- Other sounds ---
+    dogFall:        'sounds/baymax.mp3',  // Dog lands after a fall     → put sound path here
+    enemyKill:      '',  // Enemy stomped / killed     → put sound path here
+};
+
+const CUSTOM_IMAGES = {
+    bgImage1: 'img/santa_rosa_bg.png', 
+    bgImage2: 'img/airplane_bg.jpg', 
+    bgImage3: 'img/kharkiv.jpg', 
+
+    playerIdle: 'img/nina5_idle.png',
+    playerRun1: 'img/nina5_idle.png',
+    playerRun2: 'img/nina5_idle.png',
+    playerJump: 'img/nina5_idle.png',
+    
+    dogIdle: 'img/baymax5_idle.png',
+    dogRun1: 'img/baymax5_idle.png',
+    dogRun2: 'img/baymax5_idle.png',
+    dogJump: 'img/baymax5_idle.png',
+
+    princess: 'img/keeper.png',
+
+    // --- Shared / fallback enemy sprites ---
+    enemyWalker:  'img/demon.png',
+    enemyJumper:  'img/demon.png',
+
+    // --- Level-specific enemy sprites (leave '' to fall back to the shared ones above) ---
+    // Level 1 (Santa Rosa)
+    enemyWalkerL1: 'img/demon.png',
+    enemyJumperL1: 'img/demon.png',
+    // Level 2 (Airplane)
+    enemyWalkerL2: 'img/stewardess.png',
+    enemyJumperL2: 'img/stewardess.png',
+    // Level 3 (Kharkiv)
+    enemyWalkerL3: 'img/military.png',
+    enemyJumperL3: 'img/military.png',
+
+    coinNormal:     'img/miffy.png',
+    coinSpeed:      'img/matcha.png',
+    coinJump:       'img/halva.png',
+    coinInvincible: '',
+    coinSlow:       'img/raisin.png',
+
+    blockGrass: '',
+    blockDirt:  '',
+    blockStone: 'img/stone.png'
+};
+
+// =====================================================================
+// ENGINE & ASSET LOADER
+// =====================================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const IMAGES = {};
+for (let key in CUSTOM_IMAGES) {
+    if (CUSTOM_IMAGES[key] !== '') {
+        IMAGES[key] = new Image();
+        IMAGES[key].src = CUSTOM_IMAGES[key];
+    }
+}
+
+// ---- Audio setup ----
+const bgMusic = new Audio();
+if (CUSTOM_AUDIO.bgMusic !== '') {
+    bgMusic.src = CUSTOM_AUDIO.bgMusic;
+    bgMusic.loop = true;
+    bgMusic.volume = 0.2;
+}
+
+// Build a keyed SFX map — one Audio object per slot
+const SFX = {};
+const sfxKeys = ['coinNormal','coinSpeed','coinJump','coinInvincible','coinSlow','dogFall','enemyKill'];
+for (let k of sfxKeys) {
+    SFX[k] = new Audio();
+    if (CUSTOM_AUDIO[k] !== '') SFX[k].src = CUSTOM_AUDIO[k];
+}
+
+let musicEnabled = true;
+
+function playSFX(key) {
+    if (!musicEnabled) return;
+    const audio = SFX[key];
+    if (!audio || !audio.src) return;
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+}
+
+// Coin type → sfx key map
+const COIN_SFX = { C: 'coinNormal', S: 'coinSpeed', J: 'coinJump', I: 'coinInvincible', L: 'coinSlow' };
+
+// ---- Sprite helper ----
+function drawSprite(ctx, key, x, y, w, h, fallbackColor, text = "") {
+    if (IMAGES[key] && IMAGES[key].complete && IMAGES[key].naturalWidth > 0) {
+        ctx.drawImage(IMAGES[key], x, y, w, h);
+    } else {
+        ctx.fillStyle = fallbackColor;
+        ctx.fillRect(x, y, w, h);
+        if (text) {
+            ctx.fillStyle = "white";
+            ctx.font = "12px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(text, x + w/2, y + h/2 + 4);
+        }
+    }
+}
+
+// =====================================================================
+// GAME VARIABLES & LEVELS
+// =====================================================================
+const TILE_SIZE = 40;
+const GRAVITY = 0.6;
+let keys = {};
+let cameraX = 0;
+let currentLevelIndex = 0;
+let score = 0;
+let gameState = "MENU"; 
+let currentCoinMessage = "No coins taken yet"; 
+
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (e.code === 'KeyF' && !e.repeat) toggleFullscreen();
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+// ---- LEVELS ----
+// Each level can now optionally define:
+//   enemyWalkerSprite: key in CUSTOM_IMAGES (e.g. 'enemyWalkerL2')
+//   enemyJumperSprite: key in CUSTOM_IMAGES (e.g. 'enemyJumperL2')
+// If omitted (or '') the engine falls back to 'enemyWalker' / 'enemyJumper'.
+// Maps: . = empty, X = solid, C = coin, S = speed, J = jump, I = invincible, L = slow, W = walker, B = bouncer, P = Keeper
+const LEVELS = [
+    {
+        bg: "#87CEEB", 
+        bgSprite: "bgImage1",
+        groundSprite: "blockStone",
+        // Level 1 enemy sprites — fill in '' to use shared defaults
+        enemyWalkerSprite: 'enemyWalkerL1',
+        enemyJumperSprite: 'enemyJumperL1',
+        map:[
+            "............................................................",
+            "............................................................",
+            "............................................................",
+            "........C.C.................................................",
+            ".......XXXXXX...........S...............L...................",
+            "......................XXXX.................B................",
+            "................................C..J.....XXXXX..............",
+            ".......C....W.L.......C..S.....XXXXX...........W...C.C.C....",
+            "XXXXXXXXX...XXXXX...XXXXXXX............XXXXXX....XXXXXXXXXXX",
+            "............................................................"
+        ]
+    },
+    {
+        bg: "#2b2b2b", 
+        bgSprite: "bgImage2",
+        groundSprite: "blockStone",
+        // Level 2 enemy sprites
+        enemyWalkerSprite: 'enemyWalkerL2',
+        enemyJumperSprite: 'enemyJumperL2',
+        map:[
+            "............................................................",
+            "............................................................",
+            "............................................................",
+            ".................XXXXX......................................",
+            "......C......................C..................L...........",
+            ".....XXXX...................XXX.............................",
+            "..........................................W.....W...........",
+            "...........W.....S..B.................XXXXXXXXXXXXX..XXXXXXX",
+            "XXXXX...XXXXXX..XXXXXXX..XXXXXXX....XX...............XXXXXXX",
+            "XXXXX....XXXXX....XXXXX....XXXXX.....................XXXXXXX"
+        ]
+    },
+    {
+        bg: "#4e7a27", 
+        bgSprite: "bgImage3",
+        groundSprite: "blockStone",
+        // Level 3 enemy sprites
+        enemyWalkerSprite: 'enemyWalkerL3',
+        enemyJumperSprite: 'enemyJumperL3',
+        map:[
+            "............................................................",
+            "............................................................",
+            "........................J...................................",
+            "............C.........XXX................C..................",
+            "....................XXXX...............XXXXX........S.......",
+            "..........XXXXX............C..B....................XXXXX....",
+            "..........................XXXXXXX...........................",
+            ".......W........W...................C.C s.W.................P.",
+            "XXXXXXXXXXXXXXXXXXX...X..........XXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            "............................................................"
+        ]
+    },
+];
+
+let blocks = [], coins = [], enemies = [], princess = null;
+
+// =====================================================================
+// MENU LOGIC
+// =====================================================================
+document.getElementById('btnPlay').addEventListener('click', () => {
+    document.getElementById('mainMenu').style.display = 'none';
+    gameState = "PLAYING";
+    if (musicEnabled && bgMusic.src) {
+        bgMusic.play().catch(e => console.log("Waiting for interaction."));
+    }
+});
+
+document.getElementById('btnFullscreen').addEventListener('click', toggleFullscreen);
+
+document.getElementById('btnMusic').addEventListener('click', () => {
+    musicEnabled = !musicEnabled;
+    const btn = document.getElementById('btnMusic');
+    if (musicEnabled) {
+        btn.innerText = "Turn off music";
+        if (gameState !== "MENU" && bgMusic.src) bgMusic.play();
+    } else {
+        btn.innerText = "Turn on music";
+        bgMusic.pause();
+    }
+});
+
+// =====================================================================
+// ENTITY CLASSES
+// =====================================================================
+class Entity {
+    constructor(x, y, w, h) {
+        this.x = x; this.y = y; this.w = w; this.h = h;
+        this.vx = 0; this.vy = 0;
+        this.grounded = false;
+        this.direction = 1; 
+    }
+    
+    updatePhysics() {
+        this.x += this.vx;
+        for (let b of blocks) {
+            if (this.collidesWith(b)) {
+                if (this.vx > 0) { this.x = b.x - this.w; this.vx = 0; }
+                else if (this.vx < 0) { this.x = b.x + b.w; this.vx = 0; }
+            }
+        }
+
+        this.y += this.vy;
+        const wasGrounded = this.grounded;
+        this.grounded = false;
+        for (let b of blocks) {
+            if (this.collidesWith(b)) {
+                if (this.vy > 0) { this.y = b.y - this.h; this.vy = 0; this.grounded = true; }
+                else if (this.vy < 0) { this.y = b.y + b.h; this.vy = 0; }
+            }
+        }
+        this.vy += GRAVITY;
+        // Return whether entity just landed (was in air, now grounded)
+        return (!wasGrounded && this.grounded);
+    }
+
+    collidesWith(other) {
+        return this.x < other.x + other.w && this.x + this.w > other.x &&
+               this.y < other.y + other.h && this.y + this.h > other.y;
+    }
+}
+
+function hasGroundAhead(entity, currentVx) {
+    let aheadX = currentVx > 0 ? entity.x + entity.w + 5 : entity.x - 5;
+    let checkY = (entity.platformY !== undefined && !entity.grounded) 
+                    ? entity.platformY + 10 
+                    : entity.y + entity.h + 10; 
+    for (let b of blocks) {
+        if (aheadX >= b.x && aheadX <= b.x + b.w && checkY >= b.y && checkY <= b.y + b.h) return true;
+    }
+    return false;
+}
+
+class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 55, 64);
+        this.baseSpeed = 4;
+        this.baseJump = -14;
+        this.speed = this.baseSpeed;
+        this.jumpPower = this.baseJump;
+        this.powerTimer = 0;
+        this.invincible = false;
+    }
+
+    update() {
+        if (keys['ArrowRight'] || keys['KeyD']) { this.vx = this.speed; this.direction = 1; }
+        else if (keys['ArrowLeft'] || keys['KeyA']) { this.vx = -this.speed; this.direction = -1; }
+        else { this.vx = 0; }
+
+        if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && this.grounded) {
+            this.vy = this.jumpPower;
+        }
+
+        this.updatePhysics();
+
+        if (this.powerTimer > 0) {
+            this.powerTimer--;
+            if (this.powerTimer <= 0) {
+                this.speed = this.baseSpeed;
+                this.jumpPower = this.baseJump;
+                this.invincible = false;
+            }
+        }
+
+        if (this.y > canvas.height + 100) resetLevel();
+        if (this.x > LEVELS[currentLevelIndex].map[0].length * TILE_SIZE - 100) {
+            if (currentLevelIndex < LEVELS.length - 1) {
+                currentLevelIndex++;
+                loadLevel(currentLevelIndex);
+            }
+        }
+    }
+
+    draw() {
+        let sprite = 'playerIdle';
+        if (!this.grounded) sprite = 'playerJump';
+        else if (Math.abs(this.vx) > 0) sprite = (Math.floor(Date.now() / 150) % 2 === 0) ? 'playerRun1' : 'playerRun2';
+
+        let color = this.invincible ? (Math.floor(Date.now() / 100) % 2 ? 'gold' : 'white') : 'red';
+        ctx.save();
+        ctx.translate(this.x + this.w/2 - cameraX, this.y + this.h/2);
+        ctx.scale(this.direction, 1);
+        drawSprite(ctx, sprite, -this.w/2, -this.h/2, this.w, this.h, color, "Nina");
+        ctx.restore();
+    }
+}
+
+class Dog extends Entity {
+    constructor(x, y) {
+        super(x, y, 50, 45);
+        this.target = null;
+        this._wasInAir = false; // track airborne state for fall sound
+    }
+
+    update() {
+        if (!this.target) return;
+        let dist = this.target.x - this.x;
+        let followDist = 50;
+
+        if (Math.abs(dist) > followDist) {
+            this.vx = Math.sign(dist) * (this.target.speed * 0.95);
+            this.direction = Math.sign(dist);
+        } else this.vx = 0;
+
+        let oldX = this.x; let oldVx = this.vx;
+        this.updatePhysics(); 
+
+        if (this.grounded) {
+            let blocked = (Math.abs(oldVx) > 0 && this.x === oldX);
+            let targetIsAbove = (this.target.y < this.y - 40 && Math.abs(dist) < 100);
+            let pitAhead = !hasGroundAhead(this, oldVx) && Math.abs(oldVx) > 0;
+            if (blocked || targetIsAbove || pitAhead) this.vy = -14; 
+        }
+
+        // --- FALL SOUND & TELEPORT LOGIC ---
+        // 1. If the dog falls off the bottom of the screen (into a pit)
+        if (this.y > canvas.height + 50) {
+            playSFX('dogFall'); // Play the sound ONLY here
+            this.x = this.target.x; this.y = this.target.y - 20; this.vy = 0;
+        } 
+        // 2. If the dog just gets left too far behind (teleport quietly)
+        else if (Math.abs(dist) > 600) {
+            this.x = this.target.x; this.y = this.target.y - 20; this.vy = 0;
+        }
+    }
+
+    draw() {
+        let sprite = 'dogIdle';
+        if (!this.grounded) sprite = 'dogJump';
+        else if (Math.abs(this.vx) > 0) sprite = (Math.floor(Date.now() / 100) % 2 === 0) ? 'dogRun1' : 'dogRun2';
+
+        ctx.save();
+        ctx.translate(this.x + this.w/2 - cameraX, this.y + this.h/2);
+        ctx.scale(this.direction, 1);
+        drawSprite(ctx, sprite, -this.w/2, -this.h/2, this.w, this.h, 'orange', "Dog");
+        ctx.restore();
+    }
+}
+
+class Enemy extends Entity {
+    constructor(x, y, type, levelIndex) {
+        super(x, y, 42, 42);
+        this.type = type;
+        this.vx = -2;
+        this.platformY = y + 32;
+        this.levelIndex = levelIndex; // store level so we know which sprite to use
+    }
+
+    update() {
+        if (this.grounded) this.platformY = this.y + this.h;
+
+        let oldX = this.x; let oldVx = this.vx;
+        this.updatePhysics();
+        
+        if (this.type === 'walker') {
+            if (this.x === oldX || !hasGroundAhead(this, oldVx)) this.vx = -oldVx; 
+            else this.vx = oldVx; 
+        } else if (this.type === 'bouncer') {
+            if (this.x === oldX || !hasGroundAhead(this, oldVx)) this.vx = -oldVx; 
+            else this.vx = oldVx;
+            if (this.grounded) this.vy = -10; 
+        }
+    }
+
+    draw() {
+        // Resolve sprite: prefer level-specific key, fall back to shared key
+        const level = LEVELS[this.levelIndex];
+        let spriteKey, fallbackKey, fallbackColor;
+
+        if (this.type === 'walker') {
+            // e.g. 'enemyWalkerL2' or '' → fall back to 'enemyWalker'
+            const levelKey = level.enemyWalkerSprite;
+            spriteKey = (levelKey && IMAGES[levelKey]) ? levelKey : 'enemyWalker';
+            fallbackColor = 'purple';
+        } else {
+            const levelKey = level.enemyJumperSprite;
+            spriteKey = (levelKey && IMAGES[levelKey]) ? levelKey : 'enemyJumper';
+            fallbackColor = 'magenta';
+        }
+
+        drawSprite(ctx, spriteKey, this.x - cameraX, this.y, this.w, this.h, fallbackColor, "Bad");
+    }
+}
+
+class Princess extends Entity {
+    constructor(x, y) { super(x, y-20, 90, 90); }
+    draw() { drawSprite(ctx, 'princess', this.x - cameraX, this.y-20, this.w, this.h, 'pink', "Keeper"); }
+}
+
+class Coin {
+    constructor(x, y, type) {
+        this.x = x; this.y = y; this.w = 30; this.h = 30;
+        this.type = type; this.active = true;
+    }
+    draw() {
+        if (!this.active) return;
+        let color, sprite, label;
+        switch(this.type) {
+            case 'C': color = 'gold';    sprite = 'coinNormal';     label = 'C'; break;
+            case 'S': color = '#ff4444'; sprite = 'coinSpeed';      label = 'S'; break;
+            case 'J': color = '#4444ff'; sprite = 'coinJump';       label = 'J'; break;
+            case 'I': color = '#ffff00'; sprite = 'coinInvincible'; label = '★'; break;
+            case 'L': color = 'gray';    sprite = 'coinSlow';       label = 'Z'; break;
+        }
+        let yOffset = Math.sin(Date.now() / 200) * 5;
+        drawSprite(ctx, sprite, this.x - cameraX, this.y + yOffset, this.w, this.h, color, label);
+    }
+}
+
+// =====================================================================
+// CORE FUNCTIONS
+// =====================================================================
+let player = new Player(0,0);
+let dog = new Dog(0,0);
+
+function loadLevel(index) {
+    blocks = []; coins = []; enemies = []; princess = null;
+    let map = LEVELS[index].map;
+
+    for (let r = 0; r < map.length; r++) {
+        for (let c = 0; c < map[r].length; c++) {
+            let char = map[r][c];
+            let x = c * TILE_SIZE;
+            let y = r * TILE_SIZE;
+
+            if (char === 'X') blocks.push({x, y, w: TILE_SIZE, h: TILE_SIZE, sprite: LEVELS[index].groundSprite});
+            if (char === 'C' || char === 'S' || char === 'J' || char === 'I' || char === 'L') coins.push(new Coin(x + 10, y + 10, char));
+            // Pass index so enemies know their level
+            if (char === 'W') enemies.push(new Enemy(x, y, 'walker', index));
+            if (char === 'B') enemies.push(new Enemy(x, y, 'bouncer', index));
+            if (char === 'P') princess = new Princess(x, y - 8);
+        }
+    }
+    player = new Player(50, 100);
+    dog = new Dog(20, 100);
+    dog.target = player;
+}
+
+function resetLevel() {
+    loadLevel(currentLevelIndex);
+}
+
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === "PLAYING") {
+        player.update();
+        dog.update();
+    } else if (gameState === "WIN") {
+        let dist = princess.x - player.x - 25; 
+        if (dist > 5) { player.vx = 2; player.direction = 1; } else { player.vx = 0; player.direction = 1; }
+        player.updatePhysics();
+        let dogDist = player.x - 30 - dog.x;
+        if (Math.abs(dogDist) > 5) { dog.vx = Math.sign(dogDist) * 2; dog.direction = Math.sign(dogDist); } else { dog.vx = 0; dog.direction = 1; }
+        dog.updatePhysics();
+    }
+
+    cameraX = player.x - canvas.width / 2 + player.w / 2;
+    if (cameraX < 0) cameraX = 0;
+
+    // Draw Background
+    let bgSprite = LEVELS[currentLevelIndex].bgSprite;
+    if (IMAGES[bgSprite] && IMAGES[bgSprite].complete && IMAGES[bgSprite].naturalWidth > 0) {
+        ctx.drawImage(IMAGES[bgSprite], 0, 0, canvas.width, canvas.height);
+    } else {
+        ctx.fillStyle = LEVELS[currentLevelIndex].bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // Draw Map tiles
+    for (let b of blocks) {
+        if (b.x - cameraX > canvas.width || b.x + b.w - cameraX < 0) continue;
+        drawSprite(ctx, b.sprite, b.x - cameraX, b.y, b.w, b.h, '#4CAF50');
+    }
+
+    // Coin Collection — play the matching sound for each coin type
+    for (let c of coins) {
+        if (c.active && player.collidesWith(c) && gameState === "PLAYING") {
+            c.active = false;
+            playSFX(COIN_SFX[c.type]); // ← per-coin sound
+            if (c.type === 'C') { score += 10; currentCoinMessage = "Miffy - +10 Points!"; }
+            if (c.type === 'S') { player.speed = 8; player.powerTimer = 300; currentCoinMessage = "Matcha - your speed 2X now!"; }
+            if (c.type === 'J') { player.jumpPower = -18; player.powerTimer = 300; currentCoinMessage = "Halva - super high jump now!"; }
+            if (c.type === 'I') { player.invincible = true; player.powerTimer = 400; currentCoinMessage = "Star Coin - you are invincible!"; }
+            if (c.type === 'L') { player.speed = 2; player.powerTimer = 200; currentCoinMessage = "Raisin - your speed is halved!"; }
+        }
+        c.draw();
+    }
+
+    if (princess) {
+        princess.draw();
+        if (player.collidesWith(princess) && gameState === "PLAYING") gameState = "WIN";
+    }
+
+    // Enemy Collision
+    if (gameState === "PLAYING") {
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let e = enemies[i];
+            e.update(); e.draw();
+            if (player.collidesWith(e)) {
+                if (player.invincible) {
+                    playSFX('enemyKill');
+                    enemies.splice(i, 1); 
+                }
+                else if (player.vy > 0 && player.y + player.h < e.y + 15) {
+                    playSFX('enemyKill');
+                    player.vy = -8; enemies.splice(i, 1); score += 20;
+                } else resetLevel();
+            }
+        }
+    }
+
+    player.draw();
+    dog.draw();
+
+    // UI: Score
+    ctx.fillStyle = "white";
+    ctx.font = "bold 20px Arial";
+    ctx.textAlign = "left";
+    ctx.fillText("Score: " + score, 20, 100);
+    
+    // UI: Coin message
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(canvas.width - 340, 10, 330, 60);
+    ctx.fillStyle = "white";
+    ctx.font = "14px Arial";
+    ctx.textAlign = "right";
+    ctx.fillText("LATEST COIN COLLECTED:", canvas.width - 20, 30);
+    ctx.fillStyle = "yellow";
+    ctx.font = "bold 16px Arial";
+    ctx.fillText(currentCoinMessage, canvas.width - 20, 55);
+
+    if (gameState === "WIN") {
+        ctx.fillStyle = "red"; ctx.font = "40px Arial";
+        ctx.fillText("❤️", princess.x - cameraX + 5, princess.y - 20 - Math.sin(Date.now()/200)*10);
+        ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(0, canvas.height/2 - 60, canvas.width, 100);
+        ctx.fillStyle = "white"; ctx.font = "30px Arial"; ctx.textAlign = "center";
+        ctx.fillText("YOU SAVED THE BEE KEEPER!", canvas.width/2, canvas.height/2);
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+loadLevel(0);
+gameLoop();
+
+</script>
+</body>
+</html>
